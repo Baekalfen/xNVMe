@@ -83,7 +83,6 @@ cdef class xnvme_base:
             self._self_alloc()
             self.auto_free = True
             for k,v in kwargs.items():
-                # setattr(self, k, v)
                 self.__setattr__(k,v)
 
     cdef _safe_str(self, char* string):
@@ -100,6 +99,29 @@ cdef class xnvme_base:
 
 cdef class xnvme_void_p:
     cdef void *pointer
+
+class XNVMeException(Exception):
+    pass
+
+class XNVMeNullPointerException(XNVMeException):
+    pass
+
+class StructGetterSetter:
+    def __init__(self, obj, prefix):
+        self.obj = obj
+        self.prefix = prefix
+
+    def __getattr__(self, name):
+        if hasattr(self.obj, self.prefix+name):
+            return getattr(self.obj, self.prefix+name)
+        else:
+            return StructGetterSetter(self.obj, self.prefix+name+'__')
+
+    def __setattr__(self, name, value):
+        if name in ['obj', 'prefix']:
+            super().__setattr__(name, value)
+        else:
+            return setattr(self.obj, self.prefix+name, value)
 
 # NOTE: Manually added, as it's an opaque struct that isn't picked up be the regular regex
 cdef class xnvme_dev(xnvme_base):
@@ -119,6 +141,7 @@ def xnvme_cmd_ctx_from_dev(xnvme_dev dev):
     return ret
 
 # NOTE: Callback functions require some hacking, that is not worth automating
+# Handler for typedef: ctypedef int (*__xnvme_enumerate_cb "xnvme_enumerate_cb")(__xnvme_dev* dev, void* cb_args)
 cdef int xnvme_enumerate_python_callback_handler(__xnvme_dev* dev, void* cb_args):
     (py_func, py_cb_args) = <object> cb_args
     cdef xnvme_dev py_dev = xnvme_dev()
@@ -142,6 +165,7 @@ def xnvme_enumerate(sys_uri, xnvme_opts opts, object cb_func, object cb_args):
 
 
 # NOTE: Callback functions require some hacking, that is not worth automating
+# Handler for typedef: ctypedef void (*__xnvme_queue_cb "xnvme_queue_cb")(__xnvme_cmd_ctx* ctx, void* opaque)
 cdef void xnvme_queue_cb_python_callback_handler(__xnvme_cmd_ctx* dev, void* cb_args):
     (py_func, py_cb_args) = <object> cb_args
     cdef xnvme_cmd_ctx py_ctx = xnvme_cmd_ctx()
@@ -157,6 +181,8 @@ def xnvme_cmd_ctx_set_cb(xnvme_cmd_ctx ctx, object cb, object cb_arg):
     __xnvme_cmd_ctx_set_cb(ctx.pointer, xnvme_queue_cb_python_callback_handler, cb_args_context)
 
 def xnvme_queue_set_cb(xnvme_queue queue, object cb, object cb_arg):
+    # Given we force the context to be a Python object, we are free to wrap it in a Python-tuple and tag our python
+    # callback-function along.
     cb_args_tuple = (cb, cb_arg)
     cdef void* cb_args_context = <void*>cb_args_tuple
 
@@ -187,8 +213,9 @@ def xnvme_queue_set_cb(xnvme_queue queue, object cb, object cb_arg):
                 filtered_members = [
                     (t,n) for t,n in members
                     if "[" not in n and # Arrays are not supported
-                       not t.startswith('_xnvme') and # and neither autogen structs
-                       '*' not in t # and not pointer-types
+                       not t.startswith('__xnvme') and # and neither autogen structs
+                       t != '__xnvme_queue_cb' and # TODO: Cannot assign to a callback function pointer atm.
+                       t != 'void*' # TODO: Cannot assign to void pointer atm.
                 ]
                 fields = ', '.join(f'"{n}"' for t,n in filtered_members)
 
@@ -211,6 +238,15 @@ def xnvme_queue_set_cb(xnvme_queue queue, object cb, object cb_arg):
                 getters = '\n'.join(
                     getter_template_safe_str.format(member_name=n) if t == 'char*' else getter_template.format(member_name=n)
                     for t,n in filtered_members
+                )
+
+                struct_getter_template = """
+        if attr_name == '{member_name}':
+            return StructGetterSetter(self, '{member_name}__')"""
+
+                struct_getters = '\n'.join(
+                    struct_getter_template.format(member_name=n)
+                    for n in {'__'.join(n.split('__')[:-1]) for _,n in filtered_members if '__' in n}
                 )
 
                 block_template = f"""
@@ -240,6 +276,7 @@ cdef class {block_name}(xnvme_base):
         if <void *> self.pointer == NULL:
             raise AttributeError('Internal pointer is not initialized. Use _self_alloc() or supply some attribute to the constructor when instantiating this object.')
 {getters}
+{struct_getters}
         raise AttributeError(f'{{self}} has no attribute {{attr_name}}')
 """
                 f.write(block_template)
@@ -271,7 +308,7 @@ cdef class {block_name}(xnvme_base):
                         statement = f"{t} {n}"
                     _py_func_args.append(statement)
                 py_func_args = ', '.join(_py_func_args)
-                c_func_args = ', '.join(n + ('.pointer' if t[-1] == '*' else '') for t,n in func_args)
+                c_func_args = ', '.join(n + ('.pointer' if (t[-1] == '*' and t != 'char*') else '') for t,n in func_args)
                 if ret_type == 'void':
                     func_template = f"""
 def {func_name}({py_func_args}):
@@ -281,19 +318,22 @@ def {func_name}({py_func_args}):
                     if ret_type == 'void*':
                         ret_type_def = f"xnvme_void_p"
                         assign_def = "ret.pointer"
+                        verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
                         init_def = f" = xnvme_void_p()"
                     elif ret_type.startswith('__xnvme_'):
                         ret_type_def = f"{ret_type.replace('*','').replace('__','')}"
                         assign_def = "ret.pointer"
+                        verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
                         init_def = f" = {ret_type_def}()"
                     else:
                         ret_type_def = ret_type
                         assign_def = "ret"
+                        verification = ''
                         init_def = ""
                     func_template = f"""
 def {func_name}({py_func_args}):
     cdef {ret_type_def} ret{init_def}
-    {assign_def} = {__func_name}({c_func_args})
+    {assign_def} = {__func_name}({c_func_args}){verification}
     return ret
 """
                 f.write(func_template)
