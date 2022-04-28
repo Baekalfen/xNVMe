@@ -39,3 +39,9 @@ subprojects/*
 dist
 selftest_results
 *.egg-info
+
+pyxnvme/*.c
+pyxnvme/*.html
+pyxnvme/*.pxd
+pyxnvme/*.pyx
+pyxnvme/*.so
