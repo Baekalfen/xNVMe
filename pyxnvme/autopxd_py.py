@@ -1,16 +1,11 @@
 from pprint import pprint as pp
 import re
 
-def get_definitions():
-    with open('libxnvme.pxd') as f:
+def get_definitions(pxd_path):
+    with open(pxd_path) as f:
         data = f.read()
 
-        # struct_regex = r'cdef struct ([_a-zA-Z0-9]+) "(?:[_a-zA-Z0-9]+)":\n(\s+([_a-zA-Z0-9]+\*?) ([_a-zA-Z0-9])+( \".*\")?\n)+'
-        # struct_regex = r'cdef struct ([_a-zA-Z0-9]+) "(?:[_a-zA-Z0-9]+)":\n(\s+([_a-zA-Z0-9]+\*?) ([_a-zA-Z0-9\[\]])+( \".*\")?\n)+'
-        # struct_regex =
         member_regex = r'(.+?\n)+\n)'
-
-        # breakpoint()
         for struct in re.finditer(r'(cdef struct ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)":\n'+member_regex, data):
             _, __struct_name, struct_name, _ = struct.groups()
             struct = struct.groups()[0]
@@ -57,10 +52,9 @@ def get_definitions():
                 args
             )
 
-definitions = list(get_definitions())
 
-def gen_code(definitions):
-    with open('libxnvme.pyx', 'w') as f:
+def gen_code(pyx_path, definitions):
+    with open(pyx_path, 'w') as f:
         f.write("""
 import cython
 from cython.operator cimport dereference
@@ -338,5 +332,3 @@ def {func_name}({py_func_args}):
 """
                 f.write(func_template)
 
-
-gen_code(definitions)
