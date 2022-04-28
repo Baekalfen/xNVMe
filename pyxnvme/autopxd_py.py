@@ -1,61 +1,81 @@
 from pprint import pprint as pp
 import re
 
-def get_definitions(pxd_path):
-    with open(pxd_path) as f:
-        data = f.read()
+def get_definitions(pxd_f):
+    data = pxd_f.read()
 
-        member_regex = r'(.+?\n)+\n)'
-        for struct in re.finditer(r'(cdef struct ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)":\n'+member_regex, data):
-            _, __struct_name, struct_name, _ = struct.groups()
-            struct = struct.groups()[0]
-            # print("struct", struct_name)
-            members = []
-            for member in re.finditer(r'(\s+([_a-zA-Z0-9]+\*?) ([_a-zA-Z0-9\[\]]+)( \".*\")?\n)', struct):
-                _, _type, member_name, _ = member.groups()
-                # print("struct member", _type, member_name)
-                members.append((_type, member_name))
-            yield (
-                "struct",
-                struct_name,
-                __struct_name,
-                members
-            )
+    member_regex = r'(.+?\n)+\n)'
+    for struct in re.finditer(r'(cdef struct ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)":\n'+member_regex, data):
+        _, __struct_name, struct_name, _ = struct.groups()
+        struct = struct.groups()[0]
+        # print("struct", struct_name)
+        members = []
+        for member in re.finditer(r'(\s+([_a-zA-Z0-9]+\*?) ([_a-zA-Z0-9\[\]]+)( \".*\")?\n)', struct):
+            _, _type, member_name, _ = member.groups()
+            # print("struct member", _type, member_name)
+            members.append((_type, member_name))
+        yield (
+            "struct",
+            struct_name,
+            __struct_name,
+            members
+        )
 
-        for union in re.finditer(r'(cdef union ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)":\n'+member_regex, data):
-            _, __union_name, union_name, _ = union.groups()
-            union = union.groups()[0]
-            members = []
-            for member in re.finditer(r'(\s+([_a-zA-Z0-9]+\*?) ([_a-zA-Z0-9\[\]]+)( \".*\")?\n)', union):
-                _, _type, member_name, _ = member.groups()
-                members.append((_type, member_name))
-            yield (
-                "union",
-                union_name,
-                __union_name,
-                members
-            )
+    for union in re.finditer(r'(cdef union ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)":\n'+member_regex, data):
+        _, __union_name, union_name, _ = union.groups()
+        union = union.groups()[0]
+        members = []
+        for member in re.finditer(r'(\s+([_a-zA-Z0-9]+\*?) ([_a-zA-Z0-9\[\]]+)( \".*\")?\n)', union):
+            _, _type, member_name, _ = member.groups()
+            members.append((_type, member_name))
+        yield (
+            "union",
+            union_name,
+            __union_name,
+            members
+        )
 
-        for func in re.finditer(r'([_a-zA-Z0-9\*]+) ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)"(\(.+\))', data):
-            _type, __func_name, func_name, arg_body = func.groups()
+    for func in re.finditer(r'([_a-zA-Z0-9\*]+) ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)"(\(.+\))', data):
+        _type, __func_name, func_name, arg_body = func.groups()
 
-            args = []
-            for arg in re.finditer(r'([_a-zA-Z0-9\*]+) ([_a-zA-Z0-9]+)(?:, )?', arg_body.strip('()')):
-                arg_type, arg_name = arg.groups()
-                args.append((arg_type, arg_name))
+        args = []
+        for arg in re.finditer(r'([_a-zA-Z0-9\*]+) ([_a-zA-Z0-9]+)(?:, )?', arg_body.strip('()')):
+            arg_type, arg_name = arg.groups()
+            args.append((arg_type, arg_name))
 
-            yield (
-                "func",
-                _type,
-                func_name,
-                __func_name,
-                args
-            )
+        yield (
+            "func",
+            _type,
+            func_name,
+            __func_name,
+            args
+        )
+
+    # We don't generate anything, but we can eliminate redeclarations
+    for enum in re.finditer(r'(cpdef enum ([_a-zA-Z0-9]+) "([_a-zA-Z0-9]+)"):\n', data):
+        _, __enum_name, enum_name = enum.groups()
+        members = []
+        yield (
+            "enum",
+            enum_name,
+            __enum_name,
+            members
+        )
+    # We don't generate anything, but we can eliminate redeclarations
+    for typedef in re.finditer(r'(ctypedef .* "([_a-zA-Z0-9]+)".*)\n', data):
+        _, typedef_name = typedef.groups()
+        __typedef_name = "__"+typedef_name
+        yield (
+            "typedef",
+            typedef_name,
+            __typedef_name,
+            None
+        )
 
 
-def gen_code(pyx_path, definitions):
-    with open(pyx_path, 'w') as f:
-        f.write("""
+def gen_code(pyx_f, definitions, preamble=True, ignore_definitions=set()):
+    if preamble:
+        pyx_f.write("""
 import cython
 from cython.operator cimport dereference
 from libc.string cimport memcpy
@@ -194,56 +214,59 @@ def xnvme_queue_set_cb(xnvme_queue queue, object cb, object cb_arg):
 #########################################################################################################
 """)
 
-        for _type, *args in definitions:
-            if _type == 'struct' or _type == 'union':
-                block_name, __block_name, members = args
+    for _type, *args in definitions:
+        if args[-3] in ignore_definitions:
+            continue
 
-                ignore_list = [
-                    'xnvme_spec_vs_register', # Requires investigation of unions (_self_cast_void_p failing)
-                ]
-                if block_name in ignore_list:
-                    continue
+        if _type == 'struct' or _type == 'union':
+            block_name, __block_name, members = args
 
-                filtered_members = [
-                    (t,n) for t,n in members
-                    if "[" not in n and # Arrays are not supported
-                       not t.startswith('__xnvme') and # and neither autogen structs
-                       t != '__xnvme_queue_cb' and # TODO: Cannot assign to a callback function pointer atm.
-                       t != 'void*' # TODO: Cannot assign to void pointer atm.
-                ]
-                fields = ', '.join(f'"{n}"' for t,n in filtered_members)
+            ignore_list = [
+                'xnvme_spec_vs_register', # Requires investigation of unions (_self_cast_void_p failing)
+            ]
+            if block_name in ignore_list:
+                continue
 
-                setter_template = """
+            filtered_members = [
+                (t,n) for t,n in members
+                if "[" not in n and # Arrays are not supported
+                   not t.startswith('__xnvme') and # and neither autogen structs
+                   t != '__xnvme_queue_cb' and # TODO: Cannot assign to a callback function pointer atm.
+                   t != 'void*' # TODO: Cannot assign to void pointer atm.
+            ]
+            fields = ', '.join(f'"{n}"' for t,n in filtered_members)
+
+            setter_template = """
         if attr_name == '{member_name}':
             self.pointer.{member_name} = value
             return"""
-                getter_template = """
+            getter_template = """
         if attr_name == '{member_name}':
             return self.pointer.{member_name}"""
 
-                getter_template_safe_str = """
+            getter_template_safe_str = """
         if attr_name == '{member_name}':
             return self._safe_str(self.pointer.{member_name})"""
 
-                setters = '\n'.join(
-                    setter_template.format(member_name=n) for t,n in filtered_members
-                )
+            setters = '\n'.join(
+                setter_template.format(member_name=n) for t,n in filtered_members
+            )
 
-                getters = '\n'.join(
-                    getter_template_safe_str.format(member_name=n) if t == 'char*' else getter_template.format(member_name=n)
-                    for t,n in filtered_members
-                )
+            getters = '\n'.join(
+                getter_template_safe_str.format(member_name=n) if t == 'char*' else getter_template.format(member_name=n)
+                for t,n in filtered_members
+            )
 
-                struct_getter_template = """
+            struct_getter_template = """
         if attr_name == '{member_name}':
             return StructGetterSetter(self, '{member_name}__')"""
 
-                struct_getters = '\n'.join(
-                    struct_getter_template.format(member_name=n)
-                    for n in {'__'.join(n.split('__')[:-1]) for _,n in filtered_members if '__' in n}
-                )
+            struct_getters = '\n'.join(
+                struct_getter_template.format(member_name=n)
+                for n in {'__'.join(n.split('__')[:-1]) for _,n in filtered_members if '__' in n}
+            )
 
-                block_template = f"""
+            block_template = f"""
 cdef class {block_name}(xnvme_base):
     cdef {__block_name} *pointer
     fields = [{fields}]
@@ -273,62 +296,67 @@ cdef class {block_name}(xnvme_base):
 {struct_getters}
         raise AttributeError(f'{{self}} has no attribute {{attr_name}}')
 """
-                f.write(block_template)
-            elif _type == 'func':
-                ret_type, func_name, __func_name, func_args = args
+            pyx_f.write(block_template)
+        elif _type == 'func':
+            ret_type, func_name, __func_name, func_args = args
 
-                ignore_list = [
-                    'xnvme_be_attr_list_bundled', # Requires investigation of pointer-pointer (__xnvme_be_attr_list**)
-                    'xnvme_queue_init', # Requires investigation of pointer-pointer (__xnvme_queue **)
-                    'xnvme_buf_phys_alloc', # Requires investigation of phys pointer (uint64_t* phys)
-                    'xnvme_buf_phys_realloc', # Requires investigation of phys pointer (uint64_t* phys)
-                    'xnvme_buf_phys_free', # Requires investigation of phys pointer (uint64_t* phys)
-                    'xnvme_buf_vtophys', # Requires investigation of phys pointer (uint64_t* phys)
-                    'xnvme_cmd_ctx_from_dev', # Manually handled
-                    'xnvme_enumerate', # Manually handled
-                    'xnvme_cmd_ctx_set_cb', # Manually handled
-                    'xnvme_queue_set_cb', # Manually handled
-                ]
-                if func_name in ignore_list:
-                    continue
+            ignore_list = [
+                'xnvme_be_attr_list_bundled', # Requires investigation of pointer-pointer (__xnvme_be_attr_list**)
+                'xnvme_queue_init', # Requires investigation of pointer-pointer (__xnvme_queue **)
+                'xnvme_buf_phys_alloc', # Requires investigation of phys pointer (uint64_t* phys)
+                'xnvme_buf_phys_realloc', # Requires investigation of phys pointer (uint64_t* phys)
+                'xnvme_buf_phys_free', # Requires investigation of phys pointer (uint64_t* phys)
+                'xnvme_buf_vtophys', # Requires investigation of phys pointer (uint64_t* phys)
+                'xnvme_cmd_ctx_from_dev', # Manually handled
+                'xnvme_enumerate', # Manually handled
+                'xnvme_cmd_ctx_set_cb', # Manually handled
+                'xnvme_queue_set_cb', # Manually handled
+                'xnvme_lba_fpr', # uint64_t* supported yet
+                'xnvme_lba_pr', # uint64_t* supported yet
+                'xnvme_lba_fprn', # uint64_t* supported yet
+                'xnvme_lba_prn', # uint64_t* supported yet
+                'xnvme_enumeration_alloc', # Cannot assign type '__xnvme_enumeration *' to '__xnvme_enumeration **'
+            ]
+            if func_name in ignore_list:
+                continue
 
-                _py_func_args = []
-                for t,n in func_args:
-                    if t == 'void*':
-                        statement = f"xnvme_void_p {n}"
-                    elif t.startswith('__xnvme_'):
-                        statement = f"{t.replace('*','').replace('__','')} {n}"
-                    else:
-                        statement = f"{t} {n}"
-                    _py_func_args.append(statement)
-                py_func_args = ', '.join(_py_func_args)
-                c_func_args = ', '.join(n + ('.pointer' if (t[-1] == '*' and t != 'char*') else '') for t,n in func_args)
-                if ret_type == 'void':
-                    func_template = f"""
+            _py_func_args = []
+            for t,n in func_args:
+                if t == 'void*':
+                    statement = f"xnvme_void_p {n}"
+                elif t.startswith('__xnvme_'):
+                    statement = f"{t.replace('*','').replace('__','')} {n}"
+                else:
+                    statement = f"{t} {n}"
+                _py_func_args.append(statement)
+            py_func_args = ', '.join(_py_func_args)
+            c_func_args = ', '.join(n + ('.pointer' if (t[-1] == '*' and t != 'char*') else '') for t,n in func_args)
+            if ret_type == 'void':
+                func_template = f"""
 def {func_name}({py_func_args}):
     {__func_name}({c_func_args})
 """
+            else:
+                if ret_type == 'void*':
+                    ret_type_def = f"xnvme_void_p"
+                    assign_def = "ret.pointer"
+                    verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
+                    init_def = f" = xnvme_void_p()"
+                elif ret_type.startswith('__xnvme_'):
+                    ret_type_def = f"{ret_type.replace('*','').replace('__','')}"
+                    assign_def = "ret.pointer"
+                    verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
+                    init_def = f" = {ret_type_def}()"
                 else:
-                    if ret_type == 'void*':
-                        ret_type_def = f"xnvme_void_p"
-                        assign_def = "ret.pointer"
-                        verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
-                        init_def = f" = xnvme_void_p()"
-                    elif ret_type.startswith('__xnvme_'):
-                        ret_type_def = f"{ret_type.replace('*','').replace('__','')}"
-                        assign_def = "ret.pointer"
-                        verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
-                        init_def = f" = {ret_type_def}()"
-                    else:
-                        ret_type_def = ret_type
-                        assign_def = "ret"
-                        verification = ''
-                        init_def = ""
-                    func_template = f"""
+                    ret_type_def = ret_type
+                    assign_def = "ret"
+                    verification = ''
+                    init_def = ""
+                func_template = f"""
 def {func_name}({py_func_args}):
     cdef {ret_type_def} ret{init_def}
     {assign_def} = {__func_name}({c_func_args}){verification}
     return ret
 """
-                f.write(func_template)
+            pyx_f.write(func_template)
 

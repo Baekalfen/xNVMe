@@ -6,6 +6,7 @@ import autopxd
 import autopxd_py
 import platform
 import subprocess
+from io import StringIO
 
 
 if platform.system() == "Darwin":
@@ -16,26 +17,52 @@ git_root = stdout.strip().decode()
 
 # Gen .pxd file from .h file
 c_include_path = os.path.join(git_root, 'include')
-c_header_path = os.path.join(c_include_path, 'libxnvme.h')
 
-with open('libxnvme.pxd', 'w') as f_out, open(c_header_path, 'r') as f_in:
-    regex = [
-        's/SLIST_ENTRY\(xnvme_sgl\)/struct{struct xnvme_sgl *sle_next;}/g',
-        's/SLIST_HEAD\(, xnvme_sgl\)/struct{struct xnvme_sgl *slh_first;}/g',
-        's/SLIST_ENTRY\(xnvme_cmd_ctx\)/struct{struct xnvme_cmd_ctx *sle_next;}/g',
-        's/SLIST_HEAD\(, xnvme_cmd_ctx\)/struct{struct xnvme_cmd_ctx *slh_first;}/g',
-        's/FILE\s?\*/void */g',
-        's/struct iovec\s?\*/void */g',
-        's/xnvme_be_attr item\[\]/xnvme_be_attr *item/g',
-    ]
-    extra_cpp_args = [f"-I{c_include_path}"]
-    f_out.write(autopxd.translate(f_in.read(), c_header_path, extra_cpp_args, debug=False, regex=regex))
+regex = [
+    's/SLIST_ENTRY\(xnvme_sgl\)/struct{struct xnvme_sgl *sle_next;}/g',
+    's/SLIST_HEAD\(, xnvme_sgl\)/struct{struct xnvme_sgl *slh_first;}/g',
+    's/SLIST_ENTRY\(xnvme_cmd_ctx\)/struct{struct xnvme_cmd_ctx *sle_next;}/g',
+    's/SLIST_HEAD\(, xnvme_cmd_ctx\)/struct{struct xnvme_cmd_ctx *slh_first;}/g',
+    's/FILE\s?\*/void */g',
+    's/struct iovec\s?\*/void */g',
+    's/xnvme_be_attr item\[\]/xnvme_be_attr *item/g',
+    's/xnvme_ident entries\[\]/xnvme_ident *entries/g',
+]
+extra_cpp_args = [f"-I{c_include_path}"]
 
+pxd_contents = StringIO()
+pyx_contents = StringIO()
+definition_names = set()
+preamble = True
 
-# Gen CPython interface from .pxd file.
-definitions = list(autopxd_py.get_definitions('libxnvme.pxd'))
-autopxd_py.gen_code('libxnvme.pyx', definitions)
+# TODO: Split into libxnvme.pxd/pyx, libxnvme_pp.pxd/pyx, libxnvme_nvm.pxd/pyx
+for h_file in ['libxnvme.h', 'libxnvme_nvm.h', 'libxnvme_pp.h']:
+    h_path = os.path.join(c_include_path, h_file)
+    with open(h_path, 'r') as f_in:
+        pxd_contents.write(autopxd.translate(f_in.read(), h_path, extra_cpp_args, debug=False, regex=regex, additional_ignore_declarations=definition_names))
 
+    # Gen CPython interface from .pxd file.
+    pxd_contents.seek(0)
+    definitions = list(autopxd_py.get_definitions(pxd_contents))
+
+    _definition_names = {d[-3] for d in definitions}
+    _definition_names |= {d[-3]+'*' for d in definitions}
+    _definition_names |= {d[-3]+'**' for d in definitions}
+
+    autopxd_py.gen_code(pyx_contents, definitions, preamble=preamble, ignore_definitions=definition_names)
+    preamble = False
+
+    definition_names = _definition_names | definition_names
+
+# for f_name, contents in [('libxnvme_pp.pxd', pxd_contents), ('libxnvme_pp.pyx', pyx_contents)]:
+for f_name, contents in [('libxnvme.pxd', pxd_contents), ('libxnvme.pyx', pyx_contents)]:
+    with open(f_name, 'w') as f_out:
+        contents.seek(0)
+        f_out.write(contents.read())
+
+# TODO: Fix enums
+os.system(f"sed -i '' 's/xnvme_pr/__xnvme_pr/g' libxnvme.pyx")
+os.system(f"sed -i '' 's/xnvme_nvm_scopy_fmt/__xnvme_nvm_scopy_fmt/g' libxnvme.pyx")
 
 setup(
     name='libxnvme',
@@ -46,7 +73,14 @@ setup(
             include_dirs=[c_include_path],
             libraries=["xnvme"],
             library_dirs=[os.path.join(git_root, 'builddir/lib/')],
-        )
+        ),
+        # Extension(
+        #     "libxnvme_pp",
+        #     sources=['libxnvme_pp.pyx'],
+        #     include_dirs=[c_include_path],
+        #     libraries=["xnvme"],
+        #     library_dirs=[os.path.join(git_root, 'builddir/lib/')],
+        # )
         ],
         annotate=True,
         language_level = "3",
