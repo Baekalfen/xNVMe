@@ -36,7 +36,7 @@ definition_names = set()
 preamble = True
 
 # TODO: Split into libxnvme.pxd/pyx, libxnvme_pp.pxd/pyx, libxnvme_nvm.pxd/pyx
-for h_file in ['libxnvme.h', 'libxnvme_nvm.h', 'libxnvme_pp.h']:
+for h_file in ['libxnvme.h', 'libxnvme_nvm.h', 'libxnvme_pp.h']:#, 'libxnvmec.h']:
     h_path = os.path.join(c_include_path, h_file)
     with open(h_path, 'r') as f_in:
         pxd_contents.write(autopxd.translate(f_in.read(), h_path, extra_cpp_args, debug=False, regex=regex, additional_ignore_declarations=definition_names))
@@ -63,6 +63,9 @@ for f_name, contents in [('libxnvme.pxd', pxd_contents), ('libxnvme.pyx', pyx_co
 # TODO: Fix enums
 os.system(f"sed -i '' 's/xnvme_pr/__xnvme_pr/g' libxnvme.pyx")
 os.system(f"sed -i '' 's/xnvme_nvm_scopy_fmt/__xnvme_nvm_scopy_fmt/g' libxnvme.pyx")
+
+# os.system(f"sed -i '' 's/xnvmec_get_opt_attr(xnvmec_opt/xnvmec_get_opt_attr(__xnvmec_opt/g' libxnvme.pyx")
+# os.system(f"sed -i '' 's/int given\[\]/int *given/g' libxnvme.pxd")
 
 setup(
     name='libxnvme',

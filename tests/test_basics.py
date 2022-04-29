@@ -1,9 +1,12 @@
+import numpy as np
+import ctypes
 import pytest
 import libxnvme
 
+NULL = libxnvme.xnvme_void_p(0)
+
 def test_dev(dev):
-    assert dev
-    libxnvme.xnvme_dev_pr(dev, libxnvme.XNVME_PR_DEF)
+    assert dev, libxnvme.xnvme_dev_pr(dev, libxnvme.XNVME_PR_DEF)
 
 def test_ident(dev):
     ident = libxnvme.xnvme_dev_get_ident(dev)
@@ -46,7 +49,8 @@ class TestLBLK:
         nsid = libxnvme.xnvme_dev_get_nsid(dev);
 
         rng_slba = 0;
-        rng_elba = (1 << 28) // geo.lba_nbytes # About 256MB
+        rng_elba = (1 << 26) // geo.lba_nbytes # About 64MB
+        # rng_elba = (1 << 28) // geo.lba_nbytes # About 256MB
 
         mdts_naddr = min(geo.mdts_nbytes // geo.lba_nbytes, 256);
         buf_nbytes = mdts_naddr * geo.lba_nbytes;
@@ -67,7 +71,7 @@ class TestLBLK:
 
     def fill_lba_range_and_write_buffer_with_character(self, wbuf, buf_nbytes, rng_slba,rng_elba, mdts_naddr,dev, geo,nsid, character):
 
-        # libxnvme.memset(wbuf, character, buf_nbytes);
+        ctypes.memset(ctypes.c_void_p(wbuf.void_pointer), ord(character), buf_nbytes)
 
         written_bytes = 0
         for slba in range(rng_slba, rng_elba, mdts_naddr):
@@ -76,7 +80,7 @@ class TestLBLK:
 
             written_bytes += (1 + nlb) * geo.lba_nbytes
 
-            err = libxnvme.xnvme_nvm_write(ctx, nsid, slba, nlb, wbuf, libxnvme.NULL);
+            err = libxnvme.xnvme_nvm_write(ctx, nsid, slba, nlb, wbuf, NULL)
             assert not (err or libxnvme.xnvme_cmd_ctx_cpl_status(ctx)), f"xnvme_nvm_write(): {{err: 0x{err:x}, slba: 0x{slba:016x}}}"
         return written_bytes
 
@@ -88,28 +92,33 @@ class TestLBLK:
         self.fill_lba_range_and_write_buffer_with_character(wbuf, buf_nbytes, rng_slba, rng_elba, mdts_naddr, dev, geo, nsid, '!');
 
         print("Writing payload scattered within LBA range [slba,elba]");
-        assert libxnvme.xnvmec_buf_fill(wbuf, buf_nbytes, "anum") == 0
+        wbuf_mem_view = np.ctypeslib.as_array(ctypes.cast(wbuf.void_pointer,ctypes.POINTER(ctypes.c_uint8)),shape=(buf_nbytes,))
+        wbuf_mem_view[:] = np.arange(len(wbuf_mem_view))
+        # libxnvme.xnvmec_buf_fill(wbuf, buf_nbytes, "anum")
 
         for count in range(mdts_naddr):
             ctx = libxnvme.xnvme_cmd_ctx_from_dev(dev) # TODO: Reuse from before?
             wbuf_ofz = count * geo.lba_nbytes
             slba = rng_slba + count * 4
 
-            err = libxnvme.xnvme_nvm_write(ctx, nsid, slba, 0, wbuf + wbuf_ofz, libxnvme.NULL);
+            err = libxnvme.xnvme_nvm_write(ctx, nsid, slba, 0, libxnvme.xnvme_void_p(wbuf.void_pointer + wbuf_ofz), NULL);
             assert not (err or libxnvme.xnvme_cmd_ctx_cpl_status(ctx)), f"xnvme_nvm_write(): {{err: 0x{err:x}, slba: 0x{slba:016x}}}"
                 # libxnvme.xnvme_cmd_ctx_pr(ctx, XNVME_PR_DEF);
 
         print("Read scattered payload within LBA range [slba,elba]");
 
-        libxnvme.xnvmec_buf_clear(rbuf, buf_nbytes)
+        rbuf_mem_view = np.ctypeslib.as_array(ctypes.cast(rbuf.void_pointer,ctypes.POINTER(ctypes.c_uint8)),shape=(buf_nbytes,))
+        rbuf_mem_view[:] = 0
+        assert not np.all(rbuf_mem_view == wbuf_mem_view)
+        # libxnvme.xnvmec_buf_clear(rbuf, buf_nbytes)
         for count in range(mdts_naddr):
             ctx = libxnvme.xnvme_cmd_ctx_from_dev(dev)
             rbuf_ofz = count * geo.lba_nbytes
             slba = rng_slba + count * 4
 
-            err = libxnvme.xnvme_nvm_read(ctx, nsid, slba, 0, rbuf + rbuf_ofz, libxnvme.NULL)
+            err = libxnvme.xnvme_nvm_read(ctx, nsid, slba, 0, libxnvme.xnvme_void_p(rbuf.void_pointer + rbuf_ofz), NULL)
             assert not (err or libxnvme.xnvme_cmd_ctx_cpl_status(ctx)), "xnvme_nvm_read(): {{err: 0x{err:x}, slba: 0x{slba:016x}}}"
 
-        assert not libxnvme.xnvmec_buf_diff(wbuf, rbuf, buf_nbytes)
-			# libxnvme.xnvmec_buf_diff_pr(wbuf, rbuf, buf_nbytes, XNVME_PR_DEF);
+        assert np.all(rbuf_mem_view == wbuf_mem_view), libxnvme.xnvmec_buf_diff_pr(wbuf, rbuf, buf_nbytes, XNVME_PR_DEF)
+        # assert not libxnvme.xnvmec_buf_diff(wbuf, rbuf, buf_nbytes)
 

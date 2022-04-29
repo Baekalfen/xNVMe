@@ -81,6 +81,7 @@ from cython.operator cimport dereference
 from libc.string cimport memcpy
 from libc.stdlib cimport calloc, free
 from libc.stdint cimport uintptr_t
+from cpython cimport memoryview
 
 cdef class xnvme_base:
     # cdef void *pointer
@@ -111,8 +112,23 @@ cdef class xnvme_base:
         if self.pointer and self.auto_free:
             self._self_dealloc()
 
-cdef class xnvme_void_p:
+    # def void_pointer(self):
+    #     return <uintptr_t> self.pointer
+
+cdef class xnvme_void_p(xnvme_base):
     cdef void *pointer
+
+    def __init__(self, pointer=None):
+        if pointer:
+            self._set_void_pointer(pointer)
+
+    def _set_void_pointer(self, uintptr_t void_p):
+        self.pointer = <void *> void_p
+
+    def __getattr__(self, attr_name):
+        if attr_name == 'void_pointer':
+            return <uintptr_t> self.pointer
+        return super().__getattr__(attr_name)
 
 class XNVMeException(Exception):
     pass
@@ -149,7 +165,7 @@ cdef class xnvme_queue(xnvme_base):
 def xnvme_cmd_ctx_from_dev(xnvme_dev dev):
     cdef __xnvme_cmd_ctx ctx = __xnvme_cmd_ctx_from_dev(dev.pointer)
     cdef __xnvme_cmd_ctx* ctx_p = <__xnvme_cmd_ctx *> calloc(1, sizeof(__xnvme_cmd_ctx))
-    memcpy(<void*> &ctx, <void*> ctx_p, sizeof(__xnvme_cmd_ctx))
+    memcpy(<void*> ctx_p, <void*> &ctx, sizeof(__xnvme_cmd_ctx))
     cdef xnvme_cmd_ctx ret = xnvme_cmd_ctx()
     ret.pointer = ctx_p
     return ret
@@ -229,10 +245,10 @@ def xnvme_queue_set_cb(xnvme_queue queue, object cb, object cb_arg):
 
             filtered_members = [
                 (t,n) for t,n in members
-                if "[" not in n and # Arrays are not supported
-                   not t.startswith('__xnvme') and # and neither autogen structs
+                if "[" not in n and # TODO: Arrays are not supported yet (PyMemoryView_FromMemory(char *mem, Py_ssize_t size, int flags))
+                   not t.startswith('__xnvme') and # TODO: We can't get/set these structs yet (wrap/unwrap from xnvme python class)
                    t != '__xnvme_queue_cb' and # TODO: Cannot assign to a callback function pointer atm.
-                   t != 'void*' # TODO: Cannot assign to void pointer atm.
+                   t != 'void*' # TODO: Cannot assign to void pointer atm. (wrap/unwrap from xnvme_void_p python class)
             ]
             fields = ', '.join(f'"{n}"' for t,n in filtered_members)
 
@@ -292,6 +308,10 @@ cdef class {block_name}(xnvme_base):
     def __getattr__(self, attr_name):
         if <void *> self.pointer == NULL:
             raise AttributeError('Internal pointer is not initialized. Use _self_alloc() or supply some attribute to the constructor when instantiating this object.')
+        if attr_name == 'sizeof':
+            return sizeof({__block_name})
+        if attr_name == 'void_pointer':
+            return <uintptr_t> self.pointer
 {getters}
 {struct_getters}
         raise AttributeError(f'{{self}} has no attribute {{attr_name}}')
@@ -316,6 +336,10 @@ cdef class {block_name}(xnvme_base):
                 'xnvme_lba_fprn', # uint64_t* supported yet
                 'xnvme_lba_prn', # uint64_t* supported yet
                 'xnvme_enumeration_alloc', # Cannot assign type '__xnvme_enumeration *' to '__xnvme_enumeration **'
+                'xnvmec_timer_start', # TODO
+                'xnvmec_timer_stop', # TODO
+                'xnvmec_timer_bw_pr', # TODO
+                'xnvmec_cli_to_opts', # TODO
             ]
             if func_name in ignore_list:
                 continue
@@ -324,7 +348,7 @@ cdef class {block_name}(xnvme_base):
             for t,n in func_args:
                 if t == 'void*':
                     statement = f"xnvme_void_p {n}"
-                elif t.startswith('__xnvme_'):
+                elif t.startswith('__xnvme_') or t.startswith('__xnvmec_'):
                     statement = f"{t.replace('*','').replace('__','')} {n}"
                 else:
                     statement = f"{t} {n}"
@@ -342,7 +366,7 @@ def {func_name}({py_func_args}):
                     assign_def = "ret.pointer"
                     verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
                     init_def = f" = xnvme_void_p()"
-                elif ret_type.startswith('__xnvme_'):
+                elif ret_type.startswith('__xnvme_') or ret_type.startswith('__xnvmec_'):
                     ret_type_def = f"{ret_type.replace('*','').replace('__','')}"
                     assign_def = "ret.pointer"
                     verification = f'\n    if <void*> ret.pointer == NULL: raise XNVMeNullPointerException("{func_name} returned a null-pointer")'
