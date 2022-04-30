@@ -128,6 +128,8 @@ cdef class xnvme_void_p(xnvme_base):
     def __getattr__(self, attr_name):
         if attr_name == 'void_pointer':
             return <uintptr_t> self.pointer
+        if attr_name == 'pointer':
+            return <uintptr_t> self.pointer
         return super().__getattr__(attr_name)
 
 class XNVMeException(Exception):
@@ -157,9 +159,24 @@ class StructGetterSetter:
 cdef class xnvme_dev(xnvme_base):
     cdef __xnvme_dev *pointer
 
+    def __init__(self, __void_p=None):
+        if __void_p:
+            self._self_cast_void_p(__void_p)
+
+    def _self_cast_void_p(self, void_p):
+        self.pointer = <__xnvme_dev *> void_p.pointer
+
+
 # NOTE: Manually added, as it's an opaque struct that isn't picked up be the regular regex
 cdef class xnvme_queue(xnvme_base):
     cdef __xnvme_queue *pointer
+
+    def __init__(self, __void_p=None):
+        if __void_p:
+            self._self_cast_void_p(__void_p)
+
+    def _self_cast_void_p(self, void_p):
+        self.pointer = <__xnvme_queue *> void_p.pointer
 
 # NOTE: This is the only function returning a struct directly instead of a pointer. Handled manually.
 def xnvme_cmd_ctx_from_dev(xnvme_dev dev):
@@ -245,17 +262,34 @@ def xnvme_queue_set_cb(xnvme_queue queue, object cb, object cb_arg):
 
             filtered_members = [
                 (t,n) for t,n in members
-                if "[" not in n and # TODO: Arrays are not supported yet (PyMemoryView_FromMemory(char *mem, Py_ssize_t size, int flags))
-                   not t.startswith('__xnvme') and # TODO: We can't get/set these structs yet (wrap/unwrap from xnvme python class)
+                # if "[" not in n and # TODO: Arrays are not supported yet (PyMemoryView_FromMemory(char *mem, Py_ssize_t size, int flags))
+                if (t.startswith('__xnvme') and t.endswith('*')) or( # TODO: We can't get/set these structs yet (wrap/unwrap from xnvme python class)
                    t != '__xnvme_queue_cb' and # TODO: Cannot assign to a callback function pointer atm.
-                   t != 'void*' # TODO: Cannot assign to void pointer atm. (wrap/unwrap from xnvme_void_p python class)
+                   t != 'void*' and # TODO: Cannot assign to void pointer atm. (wrap/unwrap from xnvme_void_p python class)
+                   t != '__xnvme_geo_type' and # TODO: Support enum types
+                   t != '__xnvme_spec_vs_register' and # TODO: Support union types
+                   'xnvme_be_attr' not in t) # TODO: xnvme_be_attr_list has unsupported empty array length
             ]
             fields = ', '.join(f'"{n}"' for t,n in filtered_members)
+
+            def struct_to_class_name(t):
+                return t.split('__')[1].replace('*','')
 
             setter_template = """
         if attr_name == '{member_name}':
             self.pointer.{member_name} = value
             return"""
+
+            setter_template_struct_pointer = """
+        if attr_name == '{member_name}':
+            assert isinstance(value, {member_type})
+            self.pointer.{member_name} = <{__member_type}> value.void_pointer
+            return"""
+
+            setters = '\n'.join(
+                setter_template_struct_pointer.format(member_name=n, member_type=struct_to_class_name(t), __member_type=t) if t.startswith('__xnvme') and t.endswith('*') else setter_template.format(member_name=n) for t,n in filtered_members
+            )
+
             getter_template = """
         if attr_name == '{member_name}':
             return self.pointer.{member_name}"""
@@ -264,13 +298,29 @@ def xnvme_queue_set_cb(xnvme_queue queue, object cb, object cb_arg):
         if attr_name == '{member_name}':
             return self._safe_str(self.pointer.{member_name})"""
 
-            setters = '\n'.join(
-                setter_template.format(member_name=n) for t,n in filtered_members
-            )
+            getter_template_struct_pointer = """
+        if attr_name == '{member_name}':
+            return {member_type}(__void_p=xnvme_void_p(<uintptr_t>self.pointer.{member_name}))"""
+
+            getter_template_array_numpy = """
+        if attr_name == '{member_name}':
+            return np.ctypeslib.as_array(ctypes.cast(<uintptr_t>self.pointer.{member_name},ctypes.POINTER(ctypes.c_uint8)),shape=({member_length},))"""
+
+            getter_template_array_xnvme = """
+        if attr_name == '{member_name}':
+            return StructIndexer(self, '{member_name}__', {member_length})
+            return {member_type}(__void_p=xnvme_void_p(<uintptr_t>self.pointer.{member_name}))"""
+
+            def pick_getter(t,n):
+                if t == 'char*':
+                    return getter_template_safe_str.format(member_name=n)
+                elif t.startswith('__xnvme') and t.endswith('*'):
+                    return getter_template_struct_pointer.format(member_name=n, member_type=struct_to_class_name(t))
+                else:
+                    return getter_template.format(member_name=n)
 
             getters = '\n'.join(
-                getter_template_safe_str.format(member_name=n) if t == 'char*' else getter_template.format(member_name=n)
-                for t,n in filtered_members
+                pick_getter(t,n) for t,n in filtered_members
             )
 
             struct_getter_template = """
