@@ -127,6 +127,11 @@ repos:
     - '--disable=C0116' # "Missing function or method docstring" -- too basic, not always desired
     - '--disable=R0903' # "Too few public methods" -- there are legitimate reasons for it
     - '--disable=W1510' # Prefer result-object rather than catching exceptions when subcommands fail
+    - '--disable=R0914' # "Too many local variables" -- that's not a thing
+    - '--disable=R0912' # "Too many branches" -- that's not a thing
+    - '--disable=R0915' # "Too many statements" -- that's not a thing
+    - '--disable=I1101' # "Module 'X' has no 'Y' member, but source is unavailable." -- not helpful
+    - '--disable=W0511' # ban TODO -- sometimes, there'll be a TODO
     # excluding sphinx-conf as it would break to change it
     exclude: docs/autogen/conf.py$
 
