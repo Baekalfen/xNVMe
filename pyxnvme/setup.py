@@ -38,6 +38,16 @@ pxd_contents = StringIO()
 pyx_contents = StringIO()
 definition_names = {
     "xnvme_spec_vs_register",
+                "xnvmec_get_opt_attr",
+                "xnvmec",
+                "xnvmec_sub",
+                "xnvmec_subfunc",
+                "xnvmec_timer_start",
+                "xnvmec_timer_stop",
+                "xnvmec_timer_bw_pr",
+                "xnvmec_cli_to_opts",
+                "_xnvmec_cmd_from_file",
+                "xnvmec_cmd_from_file",
 }  # set()
 preamble = True  # noqa
 
