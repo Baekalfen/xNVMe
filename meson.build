@@ -39,6 +39,7 @@ cc_flags = [
   '-Wno-cast-function-type',
   '-Wno-strict-aliasing'
 ]
+
 add_project_arguments(
   cc.get_supported_arguments(cc_flags),
   language: 'c'
@@ -164,6 +165,9 @@ conf_inc = [ include_directories('.') ]
 if is_windows
   conf_inc += [ include_directories('toolbox' / 'third-party' / 'windows') ]
 endif
+if is_darwin
+  conf_inc += [ include_directories('toolbox' / 'third-party' / 'macos') ]
+endif
 
 rpm_conf = configuration_data()
 rpm_conf.set('NAME',    meson.project_name())
@@ -218,7 +222,7 @@ subdir('lib')
 if get_option('tests')
   subdir('tests')
   subdir('man/tests')
-  if install_completions 
+  if install_completions
      subdir('toolbox/bash_completion.d/tests')
   endif
 endif
