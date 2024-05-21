@@ -1,11 +1,7 @@
 def get_combinations():
     """Return all sensible backend configurations"""
 
-    combos = {
-        "linux": [],
-        "freebsd": [],
-        "windows": [],
-    }
+    combos = {"linux": [], "freebsd": [], "windows": [], "macos": []}
 
     combos["linux"] = [
         # Ramdisk
@@ -144,6 +140,17 @@ def get_combinations():
             "mem": ["windows"],
             "sync": ["file"],
             "label": ["file"],
+        },
+    ]
+
+    combos["macos"] = [
+        {
+            "be": ["driverkit"],
+            "mem": ["driverkit"],
+            "async": ["driverkit", "emu"],
+            "sync": ["driverkit"],
+            "admin": ["driverkit"],
+            "label": ["macvfn"],
         },
     ]
 
