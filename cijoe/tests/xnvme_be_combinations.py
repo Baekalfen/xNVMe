@@ -150,7 +150,16 @@ def get_combinations():
             "async": ["driverkit", "emu"],
             "sync": ["driverkit"],
             "admin": ["driverkit"],
-            "label": ["macvfn"],
+            "label": ["macvfn", "pcie"],
+        },
+        # Ramdisk
+        {
+            "be": ["ramdisk"],
+            "admin": ["ramdisk"],
+            "async": ["emu", "thrpool"],
+            "mem": ["posix"],
+            "sync": ["ramdisk"],
+            "label": ["bdev", "ramdisk"],
         },
     ]
 
