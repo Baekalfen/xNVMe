@@ -130,8 +130,12 @@ isal_dep = dependency(
 )
 conf_data.set('XNVME_BE_LINUX_LIBISAL_ENABLED', isal_dep.found())
 
-spdk_proj = subproject('spdk', required: get_option('with-spdk'))
-spdk_dep = spdk_proj.found() ? spdk_proj.get_variable('spdk_dep') : dependency('', required: false)
+if (is_linux or is_freebsd)
+  spdk_proj = subproject('spdk', required: get_option('with-spdk'))
+  spdk_dep = spdk_proj.found() ? spdk_proj.get_variable('spdk_dep') : dependency('', required: false)
+else
+  spdk_dep = dependency('', required: false)
+endif
 conf_data.set('XNVME_BE_SPDK_ENABLED', spdk_dep.found())
 conf_data.set('XNVME_BE_SPDK_TRANSPORT_PCIE_ENABLED', spdk_dep.found())
 conf_data.set('XNVME_BE_SPDK_TRANSPORT_TCP_ENABLED', spdk_dep.found())
