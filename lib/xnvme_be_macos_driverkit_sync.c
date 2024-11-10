@@ -8,6 +8,8 @@
 #ifdef XNVME_BE_MACOS_ENABLED
 #include <xnvme_be_macos_driverkit.h>
 #include <xnvme_dev.h>
+
+#include <mach/mach_error.h>
 #include <errno.h>
 
 static int
@@ -45,33 +47,37 @@ cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbuf_nbytes, void *mbuf, si
 	if (dbuf) {
 		buf = buffer_find(state->buffers, (uint64_t)dbuf);
 		if (!buf) {
+			XNVME_DEBUG("FAILED: buffer_find()");
 			return -EINVAL;
 		}
 		_buf_base_offset = ((uint64_t)dbuf) - buf->vaddr;
 		cmd.dbuf_nbytes = dbuf_nbytes;
 		cmd.dbuf_offset = _buf_base_offset;
 		cmd.dbuf_token = buf->vaddr;
-		XNVME_DEBUG("buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr, (uint64_t)dbuf,
-			    cmd.dbuf_offset);
+		XNVME_DEBUG("INFO: buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr,
+			    (uint64_t)dbuf, cmd.dbuf_offset);
 	}
 	if (mbuf) {
 		buf = buffer_find(state->buffers, (uint64_t)mbuf);
 		if (!buf) {
+			XNVME_DEBUG("FAILED: buffer_find()");
 			return -EINVAL;
 		}
 		_buf_base_offset = ((uint64_t)mbuf) - buf->vaddr;
 		cmd.mbuf_nbytes = mbuf_nbytes;
 		cmd.mbuf_offset = _buf_base_offset;
 		cmd.mbuf_token = buf->vaddr;
-		XNVME_DEBUG("buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr, (uint64_t)mbuf,
-			    cmd.mbuf_offset);
+		XNVME_DEBUG("INFO: buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr,
+			    (uint64_t)mbuf, cmd.mbuf_offset);
 	}
 	memcpy(cmd.cmd, &ctx->cmd, sizeof(struct xnvme_spec_cmd));
 
 	ret = IOConnectCallStructMethod(state->device_connection, NVME_ONESHOT, &cmd,
 					sizeof(NvmeSubmitCmd), &cmd_return, &output_cnt);
 	if (ret != kIOReturnSuccess) {
-		XNVME_DEBUG("xnvme_be_macos_driverkit_sync_io failed with error");
+		XNVME_DEBUG("FAILED: IOConnectCallStructMethod(NVME_ONESHOT); "
+			    "ret(0x%08x), '%s'",
+			    ret, mach_error_string(ret));
 		return -EIO;
 	}
 	memcpy(cmd.cpl, &ctx->cpl, sizeof(struct xnvme_spec_cpl));

@@ -19,7 +19,7 @@ int
 xnvme_be_macos_driverkit_enumerate(const char *sys_uri, struct xnvme_opts *opts,
 				   xnvme_enumerate_cb cb_func, void *cb_args)
 {
-	XNVME_DEBUG("xnvme_be_macos_driverkit_enumerate()");
+	XNVME_DEBUG("INFO: xnvme_be_macos_driverkit_enumerate()");
 	CFMutableDictionaryRef matching_dict = IOServiceMatching("IOUserService");
 	struct xnvme_opts tmp_opts = *opts;
 	io_iterator_t iterator;
@@ -35,6 +35,9 @@ xnvme_be_macos_driverkit_enumerate(const char *sys_uri, struct xnvme_opts *opts,
 
 	ret = IOServiceGetMatchingServices(kIOMasterPortDefault, matching_dict, &iterator);
 	if (ret != kIOReturnSuccess || !iterator) {
+		XNVME_DEBUG("FAILED: IOServiceGetMatchingServices(); ret(0x%08x), '%s'", ret,
+			    mach_error_string(ret));
+
 		return -ENODEV;
 	}
 
@@ -54,11 +57,11 @@ xnvme_be_macos_driverkit_enumerate(const char *sys_uri, struct xnvme_opts *opts,
 		if (strncmp("MacVFN-", uri, 7)) {
 			continue;
 		}
-		XNVME_DEBUG("MacVFN uri matched: %s", uri);
+		XNVME_DEBUG("INFO: MacVFN uri matched: %s", uri);
 
 		dev = xnvme_dev_open(uri, &tmp_opts);
 		if (!dev) {
-			XNVME_DEBUG("xnvme_dev_open(): %d", errno);
+			XNVME_DEBUG("INFO: xnvme_dev_open(): %d", errno);
 			return -errno;
 		}
 		if (cb_func(dev, cb_args)) {
@@ -78,6 +81,7 @@ xnvme_be_macos_driverkit_dev_close(struct xnvme_dev *dev)
 		(struct xnvme_be_macos_driverkit_state *)dev->be.state;
 
 	if (!state->device_service) {
+		XNVME_DEBUG("FAILED: !state->device_service");
 		return;
 	}
 
@@ -95,13 +99,13 @@ _xnvme_be_driverkit_create_ioqpair(struct xnvme_be_macos_driverkit_state *state,
 	size_t output_cnt;
 
 	if (qid == 0) {
-		XNVME_DEBUG("no free queue identifiers\n");
+		XNVME_DEBUG("FAILED: no free queue identifiers");
 		return -EBUSY;
 	}
 
 	qid--;
 
-	XNVME_DEBUG("nvme_create_ioqpair(%d, %d, %d)", qid, qd + 1, flags);
+	XNVME_DEBUG("INFO: nvme_create_ioqpair(%d, %d, %d)", qid, qd + 1, flags);
 
 	// nvme queue capacity must be one larger than the requested capacity
 	// since only n-1 slots in an NVMe queue may be used
@@ -117,13 +121,12 @@ _xnvme_be_driverkit_create_ioqpair(struct xnvme_be_macos_driverkit_state *state,
 					&ioqpair_create, sizeof(NvmeQueue), &ioqpair_return,
 					&output_cnt);
 	if (ret != kIOReturnSuccess) {
-		XNVME_DEBUG("NVME_CREATE_QUEUE_PAIR failed with error: 0x%08x, %s.\n", ret,
-			    mach_error_string(ret));
-	}
-	XNVME_DEBUG("NVME_CREATE_QUEUE_PAIR done\n");
-	if (ret) {
+		XNVME_DEBUG("FAILED: IOConnectCallStructMethod(NVME_CREATE_QUEUE_PAIR); "
+			    "ret(0x%08x), '%s'",
+			    ret, mach_error_string(ret));
 		return -EAGAIN;
 	}
+	XNVME_DEBUG("INFO: IOConnectCallStructMethod(NVME_CREATE_QUEUE_PAIR); success");
 
 	state->qid_sync = ioqpair_return.id;
 	state->qidmap &= ~(1ULL << qid);
@@ -143,11 +146,14 @@ _xnvme_be_driverkit_delete_ioqpair(struct xnvme_be_macos_driverkit_state *state,
 	ret = IOConnectCallStructMethod(state->device_connection, NVME_DELETE_QUEUE_PAIR,
 					&ioqpair_delete, sizeof(NvmeQueue), NULL, &output_cnt);
 	if (ret != kIOReturnSuccess) {
-		XNVME_DEBUG("NVME_DELETE_QUEUE_PAIR failed with error: 0x%08x, %s.\n", ret,
-			    mach_error_string(ret));
+		XNVME_DEBUG("FAILED: IOConnectCallStructMethod(NVME_DELETE_QUEUE_PAIR); "
+			    "ret(0x%08x), '%s'",
+			    ret, mach_error_string(ret));
 		return -EIO;
 	}
-	XNVME_DEBUG("NVME_DELETE_QUEUE_PAIR done\n");
+	XNVME_DEBUG("INFO: IOConnectCallStructMethod(NVME_DELETE_QUEUE_PAIR); success;"
+		    "ret(0x%08x), '%s'",
+		    ret, mach_error_string(ret));
 
 	state->qidmap |= 1ULL << qid;
 
@@ -168,24 +174,27 @@ xnvme_be_macos_driverkit_dev_open(struct xnvme_dev *dev)
 	matching_dict = IOServiceNameMatching(dev->ident.uri);
 	service = IOServiceGetMatchingService(kIOMasterPortDefault, matching_dict);
 	if (!service) {
+		XNVME_DEBUG("FAILED: IOServiceGetMatchingService()");
 		return -ENODEV;
 	}
 
 	err = IOServiceOpen(service, mach_task_self_, MACVFN_CLIENT_VERSION, &connection);
-	XNVME_DEBUG("Connection: %u\n", connection);
 	if (err != kIOReturnSuccess) {
-		XNVME_DEBUG("IOServiceOpen failed with error: %x:%s", err, mach_error_string(err));
+		XNVME_DEBUG("FAILED: IOServiceOpen(MACVFN_CLIENT_VERSION); connection(%u),"
+			    "ret(0x%08x), '%s'",
+			    connection, err, mach_error_string(err));
 		return -EIO;
 	}
-	XNVME_DEBUG("IOServiceOpen userclient: %u", connection);
+	XNVME_DEBUG("INFO: IOServiceOpen(MACVFN_CLIENT_VERSION); connection: %u", connection);
 
 	state->device_service = service;
 	state->device_connection = connection;
 
 	err = IOConnectCallScalarMethod(state->device_connection, NVME_INIT, NULL, 0, NULL, 0);
 	if (err != kIOReturnSuccess) {
-		XNVME_DEBUG("NVME_INIT failed with error: 0x%08x, %s.\n", err,
-			    mach_error_string(err));
+		XNVME_DEBUG("FAILED: IOConnectCallScalarMethod(NVME_INIT);"
+			    "ret(0x%08x), '%s'",
+			    err, mach_error_string(err));
 		return -EIO;
 	}
 	XNVME_DEBUG("INFO: NVME_INIT done");

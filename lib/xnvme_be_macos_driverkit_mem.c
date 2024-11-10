@@ -28,13 +28,13 @@ xnvme_be_macos_driverkit_buf_alloc(const struct xnvme_dev *dev, size_t nbytes,
 		XNVME_DEBUG("FAILED: sysconf(), errno: %d", errno);
 		return NULL;
 	}
-	XNVME_DEBUG("Page size: %lx", sz);
+	XNVME_DEBUG("INFO: Page size: %lx", sz);
 
 	// nbytes has to be a multiple of alignment. Therefore, we round up to the nearest
 	// multiple.
-	XNVME_DEBUG("Unaligned size: %lx", nbytes);
+	XNVME_DEBUG("INFO: Unaligned size: %lx", nbytes);
 	nbytes = (1 + ((nbytes - 1) / sz)) * (sz);
-	XNVME_DEBUG("Aligned size: %lx", nbytes);
+	XNVME_DEBUG("INFO: Aligned size: %lx", nbytes);
 
 	ptr = xnvme_buf_virt_alloc(sz, nbytes);
 	buf = (uint64_t *)ptr;
@@ -42,10 +42,14 @@ xnvme_be_macos_driverkit_buf_alloc(const struct xnvme_dev *dev, size_t nbytes,
 				// doesn't correctly get this.
 	buf[1] = (uint64_t)ptr; // Our token for the memory reference
 
-	XNVME_DEBUG("buf token: %llx", (uint64_t)ptr);
+	XNVME_DEBUG("INFO: buf token: %llx", (uint64_t)ptr);
 	kern_return_t ret = IOConnectCallStructMethod(state->device_connection, NVME_ALLOC_BUFFER,
 						      ptr, nbytes, NULL, 0);
 	if (ret != kIOReturnSuccess) {
+		XNVME_DEBUG("FAILED: IOConnectCallStructMethod(NVME_ALLOC_BUFFER); "
+			    "ret(0x%08x), '%s'",
+			    ret, mach_error_string(ret));
+
 		errno = ENOMEM;
 		return NULL;
 	}
@@ -64,17 +68,22 @@ xnvme_be_macos_driverkit_buf_free(const struct xnvme_dev *dev, void *buf)
 	kern_return_t ret;
 
 	if (!buf) {
+		XNVME_DEBUG("FAILED: !buf");
 		return;
 	}
 	_buf = buffer_find(state->buffers, (uint64_t)buf);
 	if (!_buf) {
+		XNVME_DEBUG("FAILED: buffer_find()");
 		return;
 	}
 
-	XNVME_DEBUG("buf token: %llx", (uint64_t)_buf->vaddr);
+	XNVME_DEBUG("INFO: buf token: %llx", (uint64_t)_buf->vaddr);
 	ret = IOConnectCallStructMethod(state->device_connection, NVME_DEALLOC_BUFFER,
 					&_buf->vaddr, sizeof(_buf->vaddr), NULL, &_output_cnt);
 	if (ret != kIOReturnSuccess) {
+		XNVME_DEBUG("FAILED: IOConnectCallStructMethod(NVME_DEALLOC_BUFFER); "
+			    "ret(0x%08x), '%s'",
+			    ret, mach_error_string(ret));
 		return;
 	}
 	// Doing a short-hand of 'buffer_remove' to skip the search;

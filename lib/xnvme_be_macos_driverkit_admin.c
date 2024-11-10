@@ -28,6 +28,7 @@ xnvme_be_macos_driverkit_admin(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbu
 	if (dbuf) {
 		buf = buffer_find(state->buffers, (uint64_t)dbuf);
 		if (!buf) {
+			XNVME_DEBUG("FAILED: buffer_find()");
 			return -EINVAL;
 		}
 		_buf_base_offset = ((uint64_t)dbuf) - buf->vaddr;
@@ -46,8 +47,9 @@ xnvme_be_macos_driverkit_admin(struct xnvme_cmd_ctx *ctx, void *dbuf, size_t dbu
 	ret = IOConnectCallStructMethod(state->device_connection, NVME_ONESHOT, &cmd,
 					sizeof(NvmeSubmitCmd), &cmd_return, &output_cnt);
 	if (ret != kIOReturnSuccess) {
-		XNVME_DEBUG("xnvme_be_macos_driverkit_admin failed with error: 0x%08x, %s.\n", ret,
-			    mach_error_string(ret));
+		XNVME_DEBUG("FAILED: IOConnectCallStructMethod(NVME_ONESHOT); "
+			    "0x%08x, '%s'",
+			    ret, mach_error_string(ret));
 		return -EIO;
 	}
 

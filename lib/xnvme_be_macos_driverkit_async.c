@@ -45,8 +45,11 @@ xnvme_be_macos_driverkit_queue_init(struct xnvme_queue *_queue, int XNVME_UNUSED
 
 	res = IOConnectMapMemory64(state->device_connection, 1 << 16 | qpid, mach_task_self(),
 				   &addr, &size, kIOMapAnywhere);
-	XNVME_DEBUG("IOConnectMapMemory64 returned: %x, %s", res, mach_error_string(res));
+	XNVME_DEBUG("INFO: IOConnectMapMemory64(); returned: %x, %s", res, mach_error_string(res));
 	if (res != kIOReturnSuccess) {
+		XNVME_DEBUG("FAILED: IOConnectMapMemory64(); "
+			    "ret(0x%08x), '%s'",
+			    res, mach_error_string(res));
 		return -EIO;
 	}
 	q->sq_queue = (RingQueue *)addr;
@@ -54,8 +57,11 @@ xnvme_be_macos_driverkit_queue_init(struct xnvme_queue *_queue, int XNVME_UNUSED
 	size = 0;
 	res = IOConnectMapMemory64(state->device_connection, qpid, mach_task_self(), &addr, &size,
 				   kIOMapAnywhere);
-	XNVME_DEBUG("IOConnectMapMemory64 returned: %x, %s", res, mach_error_string(res));
+	XNVME_DEBUG("INFO: IOConnectMapMemory64(); returned: %x, %s", res, mach_error_string(res));
 	if (res != kIOReturnSuccess) {
+		XNVME_DEBUG("FAILED: IOConnectMapMemory64(); "
+			    "ret(0x%08x), '%s'",
+			    res, mach_error_string(res));
 		return -EIO;
 	}
 	q->cq_queue = (RingQueue *)addr;
@@ -97,6 +103,8 @@ xnvme_be_macos_driverkit_queue_poke(struct xnvme_queue *queue, uint32_t XNVME_UN
 
 	ret = IOConnectCallScalarMethod(state->device_connection, NVME_POKE, qid, 2, NULL, 0);
 	if (ret != kIOReturnSuccess) {
+		XNVME_DEBUG("FAILED: IOConnectCallScalarMethod(); ret(0x%x), msg(%s)", ret,
+			    mach_error_string(ret));
 		return -EIO;
 	}
 	while ((queue_ret = queue_dequeue(q->cq_queue, &nvme_cmd)) == 0) {
@@ -159,8 +167,8 @@ xnvme_be_macos_driverkit_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, siz
 		cmd.dbuf_nbytes = dbuf_nbytes;
 		cmd.dbuf_offset = _buf_base_offset;
 		cmd.dbuf_token = buf->vaddr;
-		XNVME_DEBUG("buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr, (uint64_t)dbuf,
-			    cmd.dbuf_offset);
+		XNVME_DEBUG("INFO: buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr,
+			    (uint64_t)dbuf, cmd.dbuf_offset);
 	}
 	if (mbuf) {
 		buf = buffer_find(state->buffers, (uint64_t)mbuf);
@@ -172,8 +180,8 @@ xnvme_be_macos_driverkit_async_cmd_io(struct xnvme_cmd_ctx *ctx, void *dbuf, siz
 		cmd.mbuf_nbytes = mbuf_nbytes;
 		cmd.mbuf_offset = _buf_base_offset;
 		cmd.mbuf_token = buf->vaddr;
-		XNVME_DEBUG("buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr, (uint64_t)mbuf,
-			    cmd.mbuf_offset);
+		XNVME_DEBUG("INFO: buf token: %llx: %llx, %llx", (uint64_t)buf->vaddr,
+			    (uint64_t)mbuf, cmd.mbuf_offset);
 	}
 	memcpy(cmd.cmd, &ctx->cmd, sizeof(struct xnvme_spec_cmd));
 	cmd.backend_opaque = (uint64_t)ctx;

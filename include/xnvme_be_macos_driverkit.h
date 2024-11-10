@@ -54,6 +54,8 @@ buffer_add(struct buffer *buffers, struct buffer _new)
 			return true;
 		}
 	}
+
+	XNVME_DEBUG("FAILED: inserting vaddr: %" PRIx64, _new.vaddr);
 	return false;
 }
 
@@ -67,6 +69,8 @@ buffer_remove(struct buffer *buffers, uint64_t vaddr)
 			return true;
 		}
 	}
+
+	XNVME_DEBUG("FAILED: removing vaddr: %" PRIx64, vaddr);
 	return false;
 }
 
@@ -79,6 +83,8 @@ buffer_find(struct buffer *buffers, uint64_t vaddr)
 			return buf;
 		}
 	}
+
+	XNVME_DEBUG("FAILED: lookup of vaddr: %" PRIx64, vaddr);
 	return NULL;
 }
 
