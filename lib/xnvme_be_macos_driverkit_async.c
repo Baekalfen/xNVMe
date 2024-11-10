@@ -49,9 +49,6 @@ xnvme_be_macos_driverkit_queue_init(struct xnvme_queue *_queue, int XNVME_UNUSED
 	if (res != kIOReturnSuccess) {
 		return -EIO;
 	}
-	if (res != kIOReturnSuccess) {
-		return -EIO;
-	}
 	q->sq_queue = (RingQueue *)addr;
 
 	size = 0;
